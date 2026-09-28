@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f4c5c">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>مكتبة المخططات والكتالوجات</title>
+<style>
+:root{--ink:#12262b;--paper:#f6f5f0;--card:#fff;--line:#d9d6c9;--main:#0f4c5c;--acc:#e36414;--mute:#5d6b6e}
+@media (prefers-color-scheme:dark){:root{--ink:#e8eeee;--paper:#101b1e;--card:#172629;--line:#2c4044;--main:#5fb0c2;--mute:#9db0b3}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 "Segoe UI",Tahoma,Arial,sans-serif;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+header{background:var(--main);color:#fff;padding:18px 16px 14px}
+@media (prefers-color-scheme:dark){header{color:#101b1e}}
+h1{margin:0;font-size:1.3rem}
+header p{margin:2px 0 12px;opacity:.85;font-size:.9rem}
+input[type=search]{width:100%;padding:12px 14px;border:0;border-radius:10px;font-size:1rem;background:#fff;color:#12262b}
+main{max-width:720px;margin:0 auto;padding:14px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+button,.btn{font:inherit;border:1px solid var(--main);background:transparent;color:var(--main);padding:8px 14px;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block}
+button.fill,.btn.fill{background:var(--main);color:#fff}
+@media (prefers-color-scheme:dark){button.fill,.btn.fill{color:#101b1e}}
+button:focus-visible,.btn:focus-visible,input:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.item{background:var(--card);border:1px solid var(--line);border-inline-start:5px solid var(--main);border-radius:8px;padding:12px;margin-bottom:10px}
+.item.off{border-inline-start-color:var(--acc)}
+.name{font-weight:700;word-break:break-word}
+.meta{color:var(--mute);font-size:.85rem;margin:2px 0 8px}
+.acts{display:flex;gap:8px;flex-wrap:wrap}
+.acts>*{padding:6px 12px;font-size:.9rem}
+.msg{text-align:center;color:var(--mute);padding:30px 10px}
+dialog{border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--ink);max-width:340px;width:90%;text-align:center}
+dialog::backdrop{background:#0008}
+#qr{display:flex;justify-content:center;background:#fff;padding:12px;border-radius:10px;margin:10px 0}
+#qrlink{direction:ltr;font-size:.8rem;word-break:break-all;color:var(--mute)}
+#status{font-size:.8rem;color:var(--mute);margin-bottom:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>مكتبة المخططات والكتالوجات</h1>
+  <p>حمّل الملف مرة واحدة واحفظه للعمل بدون إنترنت</p>
+  <input type="search" id="q" placeholder="ابحث عن مخطط أو كتالوج…" aria-label="بحث">
+</header>
+<main>
+  <div class="bar">
+    <button class="fill" id="btnInstall" hidden>تثبيت على الهاتف</button>
+    <button id="btnShare">الرابط و QR</button>
+    <button id="btnAdmin">الأدمن: إضافة ملف</button>
+  </div>
+  <div id="status"></div>
+  <div id="list"><div class="msg">جارٍ التحميل…</div></div>
+</main>
+
+<dialog id="dlg">
+  <h3 id="dlgTitle"></h3>
+  <div id="qr"></div>
+  <div id="qrlink"></div>
+  <p></p><button id="dlgClose">إغلاق</button>
+</dialog>
+
+<script>
+// يكتشف المستودع تلقائياً من رابط GitHub Pages: user.github.io/repo/
+const host = location.hostname.split('.');
+const OWNER = host[0];
+const REPO  = location.pathname.split('/')[1] || (OWNER + '.github.io');
+const API   = `https://api.github.com/repos/${OWNER}/${REPO}/contents/files`;
+const CACHE = 'library-files-v1';
+const $ = s => document.querySelector(s);
+let items = [], deferredPrompt;
+
+const fmt = b => b > 1048576 ? (b/1048576).toFixed(1)+' MB' : Math.max(1,Math.round(b/1024))+' KB';
+const url = f => new URL('files/'+encodeURIComponent(f.name), location.href).href;
+
+async function load(){
+  let online = true;
+  try{
+    const r = await fetch(API,{cache:'no-cache'});
+    if(!r.ok) throw 0;
+    const data = await r.json();
+    items = data.filter(x=>x.type==='file' && x.name!=='.gitkeep').map(x=>({name:x.name,size:x.size}));
+    localStorage.setItem('list',JSON.stringify(items));
+  }catch(e){
+    online = false;
+    try{ items = JSON.parse(localStorage.getItem('list')||'[]'); }catch(_){ items=[]; }
+  }
+  $('#status').textContent = online ? '' : 'لا يوجد اتصال — تظهر القائمة المحفوظة آخر مرة.';
+  await render();
+  openFromLink();
+}
+
+async function saved(){
+  const c = await caches.open(CACHE);
+  const keys = await c.keys();
+  return new Set(keys.map(k=>k.url));
+}
+
+async function render(){
+  const term = $('#q').value.trim().toLowerCase();
+  const s = await saved();
+  const shown = items.filter(f=>f.name.toLowerCase().includes(term));
+  const box = $('#list'); box.textContent='';
+  if(!shown.length){ box.innerHTML='<div class="msg">لا توجد ملفات.</div>'; return; }
+  shown.forEach(f=>{
+    const isSaved = s.has(url(f));
+    const d = document.createElement('div');
+    d.className = 'item' + (isSaved ? '' : ' off');
+    const n = document.createElement('div'); n.className='name'; n.textContent=f.name;
+    const m = document.createElement('div'); m.className='meta';
+    m.textContent = fmt(f.size) + (isSaved ? ' · محفوظ للعمل بدون إنترنت' : '');
+    const a = document.createElement('div'); a.className='acts';
+    const open = Object.assign(document.createElement('a'),{className:'btn fill',href:url(f),target:'_blank',rel:'noopener',textContent:'فتح'});
+    const dl = Object.assign(document.createElement('a'),{className:'btn',href:url(f),download:f.name,textContent:'تنزيل'});
+    const sv = document.createElement('button');
+    sv.textContent = isSaved ? 'إزالة من الجهاز' : 'حفظ للأوفلاين';
+    sv.onclick = async()=>{
+      sv.disabled = true; sv.textContent='…';
+      const c = await caches.open(CACHE);
+      try{ isSaved ? await c.delete(url(f)) : await c.add(url(f)); }catch(e){ alert('تعذّر الحفظ، تأكد من الاتصال.'); }
+      render();
+    };
+    const qr = document.createElement('button'); qr.textContent='QR';
+    qr.onclick = ()=>showQR(f.name, location.origin+location.pathname+'?f='+encodeURIComponent(f.name));
+    a.append(open,dl,sv,qr);
+    d.append(n,m,a); box.append(d);
+  });
+}
+
+function showQR(title,link){
+  $('#dlgTitle').textContent = title;
+  $('#qrlink').textContent = link;
+  const box = $('#qr'); box.textContent='';
+  if(window.QRCode){ new QRCode(box,{text:link,width:220,height:220}); }
+  else box.textContent = 'يحتاج اتصالاً مرة واحدة لتوليد QR';
+  $('#dlg').showModal();
+}
+function openFromLink(){
+  const f = new URLSearchParams(location.search).get('f');
+  if(f && items.some(x=>x.name===f)) location.replace(url({name:f}));
+}
+
+$('#q').oninput = render;
+$('#btnShare').onclick = ()=>showQR('رابط المكتبة', location.origin+location.pathname);
+$('#btnAdmin').onclick = ()=>window.open(`https://github.com/${OWNER}/${REPO}/upload/main/files`,'_blank');
+$('#dlgClose').onclick = ()=>$('#dlg').close();
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;$('#btnInstall').hidden=false;});
+$('#btnInstall').onclick = async()=>{ if(deferredPrompt){deferredPrompt.prompt();deferredPrompt=null;$('#btnInstall').hidden=true;} };
+
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+load();
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" async></script>
+</body>
+</html>
